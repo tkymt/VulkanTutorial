@@ -20,6 +20,8 @@ private:
 	void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo);
 	void setupDebugMessenger();
 	std::vector<const char*> getRequiredExtensions();
+	void pickPhysicalDevice();
+	bool isDeviceSuitable(VkPhysicalDevice device);
 	bool checkValidationLayerSupport();
 	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
 
@@ -30,5 +32,7 @@ private:
 	GLFWwindow* window = nullptr;
 	VkInstance instance;
 	VkDebugUtilsMessengerEXT debugMessenger;
+
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 };
 

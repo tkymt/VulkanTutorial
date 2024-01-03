@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <iostream>
+#include <optional>
 
 const std::vector<const char*>validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -37,3 +38,10 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 	}
 }
 
+struct QueueFamilyIndices {
+	std::optional<uint32_t> graphicsFamily;
+
+	bool isComplete() {
+		return graphicsFamily.has_value();
+	}
+};
