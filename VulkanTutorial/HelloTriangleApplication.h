@@ -21,6 +21,7 @@ private:
 	void setupDebugMessenger();
 	std::vector<const char*> getRequiredExtensions();
 	void pickPhysicalDevice();
+	void createLogicalDevice();
 	bool isDeviceSuitable(VkPhysicalDevice device);
 	bool checkValidationLayerSupport();
 	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData);
@@ -34,5 +35,8 @@ private:
 	VkDebugUtilsMessengerEXT debugMessenger;
 
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	VkDevice device;
+
+	VkQueue graphicsQueue;
 };
 
