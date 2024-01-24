@@ -8,12 +8,19 @@
 #include <cstdlib>
 #include <optional>
 #include <set>
+#include <cstdint>
+#include <limits>
+#include <algorithm>
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
 const std::vector<const char*>validationLayers = {
     "VK_LAYER_KHRONOS_validation"
+};
+
+const std::vector<const char*>deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -58,6 +65,12 @@ struct QueueFamilyIndices {
     }
 };
 
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
+
 // アプリケーションクラス
 class HelloTriangleApplication 
 {
@@ -82,6 +95,11 @@ private:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
+    VkSwapchainKHR swapChain;
+    std::vector<VkImage>swapChainImages;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
+
     void initWindow() {
         glfwInit();
 
@@ -97,6 +115,7 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+        createSwapChain();
     }
 
     void mainLoop() {
@@ -107,6 +126,7 @@ private:
     }
 
     void cleanup() {
+        vkDestroySwapchainKHR(device, swapChain, nullptr);
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers) {
@@ -239,7 +259,8 @@ private:
 
         createInfo.pEnabledFeatures = &deviceFeatures;
 
-        createInfo.enabledExtensionCount = 0;
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
         if (enableValidationLayers) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -258,10 +279,221 @@ private:
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
+    void createSwapChain() {
+        
+        // スワップチェインを作成するメソッド
+
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+        VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+        VkPresentModeKHR presentMode = chooseSwapPresntMode(swapChainSupport.presentModes);
+        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+        // スワップチェインイメージの個数を指定
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+        if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+            // 設定可能なイメージの最大個数が0個より多く、設定したイメージの個数が最大個数を超えているとき
+            // 設定可能なイメージの最大個数を設定する
+            // maxImageCountは、0のとき設定可能な最大値が無いことを表す
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        // 作成するスワップチェインの情報を設定する
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        // 各スワップチェインイメージを構成するレイヤーの個数を指定する
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        uint32_t queueFamilyIndices[] = { indices.graphicsFamily.value(),indices.presentFamily.value() };
+
+        // キューファミリーで使用されるスワップチェインイメージの処理方法を指定する
+        if (indices.graphicsFamily != indices.presentFamily) {
+            // グラフィクスキューファミリーとプレゼンテーションキューファミリーが異なるとき
+            // VK_SHARING_MODE_CONCURRENTを指定する
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        }
+        else {
+            // 同一のキューファミリーがスワップチェインイメージを扱うとき
+            // VK_SHARING_MODE_EXCLUSIVEを指定する
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0;
+            createInfo.pQueueFamilyIndices = nullptr;
+        }
+
+        // 回転の変形を指定する
+        // とくに変形させる必要が無いので現在の変形を指定する
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+        // 他のウインドウとのブレンドのためにアルファチャンネルを使うかどうか指定する
+        // ここではアルファチャンネルを無視する設定を指定している
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+        // プレゼンテーションモードを指定する
+        createInfo.presentMode = presentMode;
+
+        // 他のウインドウが前面にあるときなどに、見えないピクセルについて無視する
+        // これらのピクセルを読み取って結果を取得する必要がない限り有効にする
+        // そうすると最良のパフォーマンスを得られる
+        createInfo.clipped = VK_TRUE;
+
+        // ウインドウのサイズが変更されたなどして
+        // アプリケーションの実行中にスワップチェインが無効になったり
+        // 最適化されなくなったりすることがある
+        // その場合、スワップチェインを最初から再度作成する必要があり
+        // 古いスワップチェインへの参照をこのフィールドに指定する必要がある
+        // ここでは、スワップチェインを１つだけ作成すると仮定する
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+            // スワップチェインの作成に失敗したとき
+            // ランタイムエラーを投げる
+            throw std::runtime_error("failed to create swap chain!");
+        }
+
+        // スワップチェインイメージの取得
+        vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+        swapChainImages.resize(imageCount);
+        vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
+        // スワップチェインイメージ用ｋに選択したフォーマットと解像度をメンバ変数に格納する
+        swapChainImageFormat = surfaceFormat.format;
+        swapChainExtent = extent;
+    }
+
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+        for (const auto& availableFormat : availableFormats) {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                // B8G8R8A8かつSRGB色空間のサーフェスフォーマットを返す
+                return availableFormat;
+            }
+        }
+        
+        // B8G8R8A8かつSRGB色空間のサーフェスフォーマットが利用不可能なとき
+        // 利用可能な最初のサーフェスフォーマットを返す
+        return availableFormats[0];
+    }
+
+    VkPresentModeKHR chooseSwapPresntMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+              
+        // プレゼンテーションモードを選択するメソッド
+        // Vulkanで定義されているプレゼンテーションモードは４つある
+        // そのうち実際に利用可能なプレゼンテーションモードから１つ指定する
+        
+        for (const auto& availablePresentMode : availablePresentModes) {
+            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                // VK_PRESENT_MODE_MAILBOX_KHRのプレゼンテーションモードを返す
+                return availablePresentMode;
+            }
+        }
+
+        // VK_PRESENT_MODE_MAILBOX_KHRのプレゼンテーションモードが利用不可能なとき
+        // VK_PRESENT_MODE_FIFO_KHRを返す
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+        
+        // スワップチェインイメージの解像度を選択するメソッド
+
+        if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+            return capabilities.currentExtent;
+        }
+        else {
+            // 最大値だったとき
+            // 適切な解像度を指定しなければならない
+
+            // ウインドウの解像度をピクセル単位で照会してから
+            // サーフェスの能力にあう範囲にクランプする
+
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            VkExtent2D actualExtent = {
+                static_cast<uint32_t>(width),
+                static_cast<uint32_t>(height)
+            };
+
+            actualExtent.width = std::clamp(
+                actualExtent.width,
+                capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+            actualExtent.height = std::clamp(
+                actualExtent.height,
+                capabilities.minImageExtent.height, capabilities.maxImageExtent.height
+            );
+
+            return actualExtent;
+        }
+    }
+
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
+        SwapChainSupportDetails details{};
+
+        // サーフェスの能力を問い合わせる
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+        // サポートされているサーフェス形式の個数を問い合わせる
+        uint32_t formatCount{};
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+        if (formatCount != 0) {
+            // ベクターのサイズを変更して、使用可能なすべてのサーフェス形式を取得する
+            details.formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+        }
+
+        // サポートされているプレゼンテーションモードの個数を問い合わせる
+        uint32_t presentModeCount{};
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+        
+        if (presentModeCount != 0) {
+            // ベクターのサイズを変更して、使用可能なすべてのプレゼンテーションモードを取得する
+            details.presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+        }
+
+        return details;
+    }
+
     bool isDeviceSuitable(VkPhysicalDevice device) {
         QueueFamilyIndices indices = findQueueFamilies(device);
 
-        return indices.isComplete();
+        bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+        // スワップチェインのサポートが適切か確認する
+        // サーフェスで少なくとも１つのサポートされているイメージ形式と
+        // 少なくとも１つサポートされているプレゼンテーションモードがあれば十分
+        bool swapChainAdequate = false;
+        if (extensionsSupported) {
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+            swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+        }
+
+        return indices.isComplete() && extensionsSupported && swapChainAdequate;
+    }
+
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+        uint32_t extensionCount;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+        std::vector<VkExtensionProperties>availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+        std::set<std::string>requiredExtensiuons(deviceExtensions.begin(), deviceExtensions.end());
+
+        for (const auto& extension : availableExtensions) {
+            requiredExtensiuons.erase(extension.extensionName);
+        }
+
+        return requiredExtensiuons.empty();
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
