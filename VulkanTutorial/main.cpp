@@ -107,6 +107,9 @@ private:
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
 
+    VkCommandPool commandPool;
+    VkCommandBuffer commandBuffer;
+
     void initWindow() {
         glfwInit();
 
@@ -127,6 +130,7 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffer();
+        createCommandPool();
     }
 
     void mainLoop() {
@@ -137,6 +141,9 @@ private:
     }
 
     void cleanup() {
+        // コマンドプールを破棄
+        vkDestroyCommandPool(device, commandPool, nullptr);
+
         for (auto framebuffer : swapChainFramebuffer) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -608,6 +615,84 @@ private:
             if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffer[i]) != VK_SUCCESS) {
                 throw std::runtime_error("faile to create framebuffer!");
             }
+        }
+    }
+
+    void createCommandPool() {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+        // コマンドプール作成情報の設定
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create command pool!");
+        }
+    }
+
+    void createCommandBuffer() {
+        // コマンドバッファーアロケーター情報の設定
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+    }
+
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+        // コマンドバッファー開始情報の設定
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin recording command buffer!");
+        }
+
+        // レンダーパス開始情報の設定
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassInfo.renderPass = renderPass;
+        renderPassInfo.framebuffer = swapChainFramebuffer[imageIndex];
+        renderPassInfo.renderArea.offset = { 0,0 };
+        renderPassInfo.renderArea.extent = swapChainExtent;
+
+        // クリアカラーの設定
+        VkClearValue clearColor = { {{0.0f,0.0f,0.0f,1.0f}} };
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+        // ビューポートの設定
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float)swapChainExtent.width;
+        viewport.height = (float)swapChainExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+        // シザーの設定
+        VkRect2D scissor{};
+        scissor.offset = { 0,0 };
+        scissor.extent = swapChainExtent;
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(commandBuffer);
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("faild to record command buffer!");
         }
     }
 
