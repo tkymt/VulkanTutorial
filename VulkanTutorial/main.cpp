@@ -16,6 +16,8 @@
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
 const std::vector<const char*>validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
@@ -101,7 +103,7 @@ private:
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
     std::vector<VkImageView> swapChainImageViews;
-    std::vector<VkFramebuffer> swapChainFramebuffer;
+    std::vector<VkFramebuffer> swapChainFramebuffers;
 
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
@@ -111,7 +113,7 @@ private:
     VkCommandBuffer commandBuffer;
 
     VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSamaphore;
+    VkSemaphore renderFinishedSemaphore;
     VkFence inFlightFence;
 
     void initWindow() {
@@ -133,7 +135,7 @@ private:
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
-        createFramebuffer();
+        createFramebuffers();
         createCommandPool();
         createSyncObjects();
     }
@@ -151,7 +153,7 @@ private:
         // コマンドプールを破棄
         vkDestroyCommandPool(device, commandPool, nullptr);
 
-        for (auto framebuffer : swapChainFramebuffer) {
+        for (auto framebuffer : swapChainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
 
@@ -324,7 +326,7 @@ private:
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-        VkPresentModeKHR presentMode = chooseSwapPresntMode(swapChainSupport.presentModes);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
         VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
 
         // スワップチェインイメージの個数を指定
@@ -415,7 +417,7 @@ private:
         swapChainImageViews.resize(swapChainImages.size());
         for (size_t i = 0; i < swapChainImages.size(); i++) {
             VkImageViewCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             createInfo.image = swapChainImages[i];
             createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
             createInfo.format = swapChainImageFormat;
@@ -466,6 +468,7 @@ private:
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
         dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
         dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
@@ -474,6 +477,7 @@ private:
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         renderPassInfo.attachmentCount = 1;
         renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
@@ -493,11 +497,11 @@ private:
         VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
 
         // 頂点シェーダーの設定
-        VkPipelineShaderStageCreateInfo vertShaderStateInfo{};
-        vertShaderStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vertShaderStateInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        vertShaderStateInfo.module = vertShaderModule;
-        vertShaderStateInfo.pName = "main";
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
 
         // フラグメントシェーダーの設定
         VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
@@ -507,7 +511,7 @@ private:
         fragShaderStageInfo.pName = "main";
 
         // 設定したシェーダーステージインフォを配列に格納
-        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStateInfo, fragShaderStageInfo };
+        VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
         // 固定関数の設定
 
@@ -607,19 +611,17 @@ private:
 
         // 作成したシェーダーモジュールを破棄する
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
-        vkDestroyShaderModule(device, vertShaderModule, nullptr);        
+        vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
 
-    void createFramebuffer() {
-        
-        swapChainFramebuffer.resize(swapChainImageViews.size());
+    void createFramebuffers() {
+        swapChainFramebuffers.resize(swapChainImageViews.size());
 
         for (size_t i = 0; i < swapChainImageViews.size(); i++) {
             VkImageView attachments[] = {
                 swapChainImageViews[i]
             };
 
-            // フレームバッファ作成情報の設定
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = renderPass;
@@ -629,8 +631,8 @@ private:
             framebufferInfo.height = swapChainExtent.height;
             framebufferInfo.layers = 1;
 
-            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffer[i]) != VK_SUCCESS) {
-                throw std::runtime_error("faile to create framebuffer!");
+            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create framebuffer!");
             }
         }
     }
@@ -675,12 +677,12 @@ private:
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass;
-        renderPassInfo.framebuffer = swapChainFramebuffer[imageIndex];
-        renderPassInfo.renderArea.offset = { 0,0 };
+        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+        renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
 
         // クリアカラーの設定
-        VkClearValue clearColor = { {{0.0f,0.0f,0.0f,1.0f}} };
+        VkClearValue clearColor = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
         renderPassInfo.clearValueCount = 1;
         renderPassInfo.pClearValues = &clearColor;
 
@@ -692,15 +694,15 @@ private:
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
-        viewport.width = (float)swapChainExtent.width;
-        viewport.height = (float)swapChainExtent.height;
+        viewport.width = static_cast<float>(swapChainExtent.width);
+        viewport.height = static_cast<float>(swapChainExtent.height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
         // シザーの設定
         VkRect2D scissor{};
-        scissor.offset = { 0,0 };
+        scissor.offset = { 0, 0 };
         scissor.extent = swapChainExtent;
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
@@ -709,7 +711,7 @@ private:
         vkCmdEndRenderPass(commandBuffer);
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
-            throw std::runtime_error("faild to record command buffer!");
+            throw std::runtime_error("failed to record command buffer!");
         }
     }
 
@@ -724,10 +726,11 @@ private:
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
         if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSamaphore) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
             vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create synchronization onjects fo a frame!");
+            throw std::runtime_error("failed to create synchronization objects for a frame!");
         }
+
     }
 
     void drawFrame() {
@@ -735,9 +738,9 @@ private:
         vkResetFences(device, 1, &inFlightFence);
 
         uint32_t imageIndex;
-        vkAcquireNextImageKHR(device, swapChain, UINT_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+        vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-        vkResetCommandBuffer(commandBuffer,/*VkCommandBufferResetFlagBits*/ 0);
+        vkResetCommandBuffer(commandBuffer, /*VkCommandBufferResetFlagBits*/ 0);
         recordCommandBuffer(commandBuffer, imageIndex);
 
         // サブミット情報の設定
@@ -746,7 +749,7 @@ private:
 
         // 待機セマフォを設定
         VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
-        VkPipelineStageFlags  waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
@@ -755,18 +758,17 @@ private:
         submitInfo.pCommandBuffers = &commandBuffer;
 
         // 信号セマフォを設定
-        VkSemaphore signalSemaphores[] = { renderFinishedSamaphore };
+        VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
-
         // プレゼンテーション情報の設定
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        
+
         presentInfo.waitSemaphoreCount = 1;
         presentInfo.pWaitSemaphores = signalSemaphores;
 
@@ -801,18 +803,16 @@ private:
                 return availableFormat;
             }
         }
-        
+
         // B8G8R8A8かつSRGB色空間のサーフェスフォーマットが利用不可能なとき
         // 利用可能な最初のサーフェスフォーマットを返す
         return availableFormats[0];
     }
 
-    VkPresentModeKHR chooseSwapPresntMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
-              
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
         // プレゼンテーションモードを選択するメソッド
         // Vulkanで定義されているプレゼンテーションモードは４つある
         // そのうち実際に利用可能なプレゼンテーションモードから１つ指定する
-        
         for (const auto& availablePresentMode : availablePresentModes) {
             if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
                 // VK_PRESENT_MODE_MAILBOX_KHRのプレゼンテーションモードを返す
@@ -824,6 +824,7 @@ private:
         // VK_PRESENT_MODE_FIFO_KHRを返す
         return VK_PRESENT_MODE_FIFO_KHR;
     }
+
 
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
         
@@ -860,25 +861,24 @@ private:
     }
 
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
-        SwapChainSupportDetails details{};
+        SwapChainSupportDetails details;
 
         // サーフェスの能力を問い合わせる
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
 
         // サポートされているサーフェス形式の個数を問い合わせる
-        uint32_t formatCount{};
+        uint32_t formatCount;
         vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
 
         if (formatCount != 0) {
-            // ベクターのサイズを変更して、使用可能なすべてのサーフェス形式を取得する
             details.formats.resize(formatCount);
             vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
         }
 
         // サポートされているプレゼンテーションモードの個数を問い合わせる
-        uint32_t presentModeCount{};
+        uint32_t presentModeCount;
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
-        
+
         if (presentModeCount != 0) {
             // ベクターのサイズを変更して、使用可能なすべてのプレゼンテーションモードを取得する
             details.presentModes.resize(presentModeCount);
@@ -887,6 +887,7 @@ private:
 
         return details;
     }
+
 
     bool isDeviceSuitable(VkPhysicalDevice device) {
         QueueFamilyIndices indices = findQueueFamilies(device);
@@ -909,16 +910,16 @@ private:
         uint32_t extensionCount;
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
-        std::vector<VkExtensionProperties>availableExtensions(extensionCount);
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
 
-        std::set<std::string>requiredExtensiuons(deviceExtensions.begin(), deviceExtensions.end());
+        std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
 
         for (const auto& extension : availableExtensions) {
-            requiredExtensiuons.erase(extension.extensionName);
+            requiredExtensions.erase(extension.extensionName);
         }
 
-        return requiredExtensiuons.empty();
+        return requiredExtensions.empty();
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
@@ -1014,15 +1015,16 @@ private:
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, 
-        VkDebugUtilsMessageTypeFlagsEXT messageType, 
-        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, 
+        VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+        VkDebugUtilsMessageTypeFlagsEXT messageType,
+        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
         void* pUserData) {
         std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
 
         return VK_FALSE;
     }
 };
+
 
 int main() {
     HelloTriangleApplication app;
